@@ -2,38 +2,19 @@
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 
-type ApplicationStatus =
-  | "Saved"
-  | "Applied"
-  | "Interview"
-  | "Offer"
-  | "Rejected"
-  | "Withdrawn";
-
-type Application = {
-  id: string;
-  company: string;
-  roleTitle: string;
-  jobDescription: string;
-  applicationDate: string;
-  status: ApplicationStatus;
-  resumeVersion: string;
-  requiredTechStack: string[];
-  notes: string;
-};
+import {
+  createApplication,
+  deleteApplication,
+  listApplications,
+  updateApplication,
+  type Application,
+  type ApplicationPayload,
+  type ApplicationStatus,
+} from "@/lib/applications-api";
 
 type ApplicationForm = Omit<Application, "id" | "requiredTechStack"> & {
   requiredTechStack: string;
 };
-
-type StoredApplication = Partial<Application> & {
-  title?: string;
-  jd?: string;
-  appliedDate?: string;
-  techStack?: string[];
-};
-
-const STORAGE_KEY = "internship-applications-v1";
 
 const STATUS_OPTIONS: ApplicationStatus[] = [
   "Saved",
@@ -57,28 +38,44 @@ const EMPTY_FORM: ApplicationForm = {
 
 export default function Home() {
   const [applications, setApplications] = useState<Application[]>([]);
-  const [hasLoadedApplications, setHasLoadedApplications] = useState(false);
   const [form, setForm] = useState<ApplicationForm>(EMPTY_FORM);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState("");
   const [statusFilter, setStatusFilter] = useState<"All" | ApplicationStatus>(
     "All",
   );
   const [techFilter, setTechFilter] = useState("");
 
   useEffect(() => {
-    const timeoutId = window.setTimeout(() => {
-      setApplications(loadApplications());
-      setHasLoadedApplications(true);
-    }, 0);
+    let isCurrent = true;
 
-    return () => window.clearTimeout(timeoutId);
-  }, []);
+    async function loadApplicationList() {
+      try {
+        const loadedApplications = await listApplications();
 
-  useEffect(() => {
-    if (hasLoadedApplications) {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(applications));
+        if (isCurrent) {
+          setApplications(loadedApplications);
+          setError("");
+        }
+      } catch {
+        if (isCurrent) {
+          setError("Could not load applications from the backend.");
+        }
+      } finally {
+        if (isCurrent) {
+          setIsLoading(false);
+        }
+      }
     }
-  }, [applications, hasLoadedApplications]);
+
+    loadApplicationList();
+
+    return () => {
+      isCurrent = false;
+    };
+  }, []);
 
   const techOptions = useMemo(() => {
     const tech = applications.flatMap((app) => app.requiredTechStack);
@@ -106,14 +103,14 @@ export default function Home() {
     }));
   }
 
-  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     if (!form.company.trim() || !form.roleTitle.trim()) {
       return;
     }
 
-    const application = {
+    const application: ApplicationPayload = {
       company: form.company.trim(),
       roleTitle: form.roleTitle.trim(),
       jobDescription: form.jobDescription.trim(),
@@ -124,22 +121,42 @@ export default function Home() {
       notes: form.notes.trim(),
     };
 
-    if (editingId) {
-      setApplications((currentApplications) =>
-        currentApplications.map((currentApplication) =>
-          currentApplication.id === editingId
-            ? { ...application, id: editingId }
-            : currentApplication,
-        ),
-      );
-    } else {
-      setApplications((currentApplications) => [
-        { ...application, id: crypto.randomUUID() },
-        ...currentApplications,
-      ]);
-    }
+    setIsSaving(true);
+    setError("");
 
-    resetForm();
+    try {
+      if (editingId) {
+        const updatedApplication = await updateApplication(
+          editingId,
+          application,
+        );
+
+        setApplications((currentApplications) =>
+          currentApplications.map((currentApplication) =>
+            currentApplication.id === editingId
+              ? updatedApplication
+              : currentApplication,
+          ),
+        );
+      } else {
+        const createdApplication = await createApplication(application);
+
+        setApplications((currentApplications) => [
+          createdApplication,
+          ...currentApplications,
+        ]);
+      }
+
+      resetForm();
+    } catch {
+      setError(
+        editingId
+          ? "Could not save application changes."
+          : "Could not create application.",
+      );
+    } finally {
+      setIsSaving(false);
+    }
   }
 
   function handleEdit(application: Application) {
@@ -156,13 +173,24 @@ export default function Home() {
     });
   }
 
-  function handleDelete(id: string) {
-    setApplications((currentApplications) =>
-      currentApplications.filter((application) => application.id !== id),
-    );
+  async function handleDelete(id: string) {
+    setIsSaving(true);
+    setError("");
 
-    if (editingId === id) {
-      resetForm();
+    try {
+      await deleteApplication(id);
+
+      setApplications((currentApplications) =>
+        currentApplications.filter((application) => application.id !== id),
+      );
+
+      if (editingId === id) {
+        resetForm();
+      }
+    } catch {
+      setError("Could not delete application.");
+    } finally {
+      setIsSaving(false);
     }
   }
 
@@ -182,8 +210,8 @@ export default function Home() {
             Application Tracker
           </h1>
           <p className="max-w-2xl text-sm leading-6 text-zinc-600">
-            A local-only MVP for tracking applications, resume versions,
-            required tech, and follow-up notes.
+            Track applications, resume versions, required tech, and follow-up
+            notes.
           </p>
         </header>
 
@@ -263,10 +291,15 @@ export default function Home() {
             </div>
 
             <button
-              className="mt-5 w-full rounded-md bg-teal-700 px-4 py-3 text-sm font-semibold text-white transition hover:bg-teal-800"
+              className="mt-5 w-full rounded-md bg-teal-700 px-4 py-3 text-sm font-semibold text-white transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:bg-zinc-400"
+              disabled={isSaving}
               type="submit"
             >
-              {editingId ? "Save Changes" : "Create Application"}
+              {isSaving
+                ? "Saving..."
+                : editingId
+                  ? "Save Changes"
+                  : "Create Application"}
             </button>
           </form>
 
@@ -301,7 +334,17 @@ export default function Home() {
               </div>
             </div>
 
-            {filteredApplications.length === 0 ? (
+            {error && (
+              <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">
+                {error}
+              </div>
+            )}
+
+            {isLoading ? (
+              <div className="rounded-lg border border-zinc-200 bg-white p-10 text-center text-sm text-zinc-500">
+                Loading applications...
+              </div>
+            ) : filteredApplications.length === 0 ? (
               <div className="rounded-lg border border-dashed border-zinc-300 bg-white p-10 text-center text-sm text-zinc-500">
                 No applications match the current filters.
               </div>
@@ -313,6 +356,7 @@ export default function Home() {
                     application={application}
                     onDelete={handleDelete}
                     onEdit={handleEdit}
+                    isSaving={isSaving}
                   />
                 ))}
               </div>
@@ -329,47 +373,6 @@ function parseTechStack(value: string) {
     .split(",")
     .map((tech) => tech.trim())
     .filter(Boolean);
-}
-
-function loadApplications(): Application[] {
-  const storedApplications = window.localStorage.getItem(STORAGE_KEY);
-
-  if (!storedApplications) {
-    return [];
-  }
-
-  try {
-    const parsedApplications = JSON.parse(storedApplications);
-
-    if (!Array.isArray(parsedApplications)) {
-      return [];
-    }
-
-    return parsedApplications.map((application: StoredApplication) => ({
-      id: application.id || crypto.randomUUID(),
-      company: application.company || "",
-      roleTitle: application.roleTitle || application.title || "",
-      jobDescription: application.jobDescription || application.jd || "",
-      applicationDate:
-        application.applicationDate || application.appliedDate || "",
-      status: isApplicationStatus(application.status)
-        ? application.status
-        : "Saved",
-      resumeVersion: application.resumeVersion || "",
-      requiredTechStack: Array.isArray(application.requiredTechStack)
-        ? application.requiredTechStack
-        : application.techStack || [],
-      notes: application.notes || "",
-    }));
-  } catch {
-    return [];
-  }
-}
-
-function isApplicationStatus(
-  status: Application["status"] | undefined,
-): status is ApplicationStatus {
-  return STATUS_OPTIONS.includes(status as ApplicationStatus);
 }
 
 function Input({
@@ -461,10 +464,12 @@ function ApplicationCard({
   application,
   onDelete,
   onEdit,
+  isSaving,
 }: {
   application: Application;
-  onDelete: (id: string) => void;
+  onDelete: (id: string) => Promise<void>;
   onEdit: (application: Application) => void;
+  isSaving: boolean;
 }) {
   return (
     <article className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
@@ -490,6 +495,7 @@ function ApplicationCard({
         <div className="flex gap-2">
           <button
             className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100"
+            disabled={isSaving}
             onClick={() => onEdit(application)}
             type="button"
           >
@@ -497,6 +503,7 @@ function ApplicationCard({
           </button>
           <button
             className="rounded-md border border-red-200 px-3 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50"
+            disabled={isSaving}
             onClick={() => onDelete(application.id)}
             type="button"
           >

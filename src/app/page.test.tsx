@@ -1,9 +1,75 @@
-import { describe, test, expect, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import Home from "./page";
 
-const STORAGE_KEY = "internship-applications-v1";
+type TestApplication = {
+  id: string;
+  company: string;
+  roleTitle: string;
+  jobDescription: string;
+  applicationDate: string | null;
+  status: "Saved" | "Applied" | "Interview" | "Offer" | "Rejected" | "Withdrawn";
+  resumeVersion: string;
+  requiredTechStack: string[];
+  notes: string;
+};
+
+let applications: TestApplication[] = [];
+
+function jsonResponse(body: unknown, init: ResponseInit = {}) {
+  return new Response(JSON.stringify(body), {
+    headers: { "Content-Type": "application/json" },
+    ...init,
+  });
+}
+
+function setupFetchMock() {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = input.toString();
+      const method = init?.method || "GET";
+      const applicationId = url.match(/\/applications\/([^/]+)$/)?.[1];
+
+      if (url.endsWith("/applications") && method === "GET") {
+        return jsonResponse(applications);
+      }
+
+      if (url.endsWith("/applications") && method === "POST") {
+        const payload = JSON.parse(init?.body as string);
+        const application = { ...payload, id: `app-${applications.length + 1}` };
+
+        applications = [application, ...applications];
+
+        return jsonResponse(application, { status: 201 });
+      }
+
+      if (applicationId && method === "PUT") {
+        const payload = JSON.parse(init?.body as string);
+        const application = { ...payload, id: applicationId };
+
+        applications = applications.map((currentApplication) =>
+          currentApplication.id === applicationId
+            ? application
+            : currentApplication,
+        );
+
+        return jsonResponse(application);
+      }
+
+      if (applicationId && method === "DELETE") {
+        applications = applications.filter(
+          (application) => application.id !== applicationId,
+        );
+
+        return new Response(null, { status: 204 });
+      }
+
+      return jsonResponse({ detail: "Not found" }, { status: 404 });
+    }),
+  );
+}
 
 async function renderTracker() {
   render(<Home />);
@@ -35,11 +101,56 @@ async function createApplication({
 
 describe("Application Tracker", () => {
   beforeEach(() => {
-    window.localStorage.clear();
+    applications = [];
+    setupFetchMock();
   });
 
   afterEach(() => {
-    window.localStorage.clear();
+    vi.unstubAllGlobals();
+  });
+
+  test("loads applications from the API", async () => {
+    applications = [
+      {
+        id: "app-1",
+        company: "OpenAI",
+        roleTitle: "Software Engineering Intern",
+        jobDescription: "",
+        applicationDate: "2026-06-01",
+        status: "Applied",
+        resumeVersion: "software-v1",
+        requiredTechStack: ["React", "TypeScript"],
+        notes: "Applied through company website.",
+      },
+    ];
+
+    render(<Home />);
+
+    expect(screen.getByText("Loading applications...")).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(screen.getByText("Software Engineering Intern")).toBeInTheDocument();
+    });
+
+    expect(fetch).toHaveBeenCalledWith(
+      "http://localhost:8000/applications",
+      expect.objectContaining({ headers: { "Content-Type": "application/json" } }),
+    );
+  });
+
+  test("shows an error when loading applications fails", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => jsonResponse({ detail: "Server error" }, { status: 500 })),
+    );
+
+    render(<Home />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Could not load applications from the backend."),
+      ).toBeInTheDocument();
+    });
   });
 
   test("creates an application", async () => {
@@ -47,24 +158,19 @@ describe("Application Tracker", () => {
 
     await createApplication();
 
-    const createdCard = screen
-      .getByText("Software Engineering Intern")
-      .closest("article");
+    const createdCard = await screen.findByText("Software Engineering Intern");
+    const createdArticle = createdCard.closest("article");
 
-    expect(createdCard).not.toBeNull();
+    expect(createdArticle).not.toBeNull();
 
-    const createdCardView = within(createdCard as HTMLElement);
+    const createdCardView = within(createdArticle as HTMLElement);
 
     expect(createdCardView.getByText("OpenAI")).toBeInTheDocument();
     expect(createdCardView.getByText("Applied")).toBeInTheDocument();
     expect(createdCardView.getByText("React")).toBeInTheDocument();
     expect(createdCardView.getByText("TypeScript")).toBeInTheDocument();
-    const storedApplications = JSON.parse(
-      window.localStorage.getItem(STORAGE_KEY) || "[]",
-    );
-
-    expect(storedApplications).toHaveLength(1);
-    expect(storedApplications[0]).toMatchObject({
+    expect(applications).toHaveLength(1);
+    expect(applications[0]).toMatchObject({
       company: "OpenAI",
       roleTitle: "Software Engineering Intern",
       status: "Applied",
@@ -127,11 +233,12 @@ describe("Application Tracker", () => {
 
     await user.click(screen.getByRole("button", { name: "Save Changes" }));
 
-    const editedCard = screen.getByText("Full Stack Intern").closest("article");
+    const editedCard = await screen.findByText("Full Stack Intern");
+    const editedArticle = editedCard.closest("article");
 
-    expect(editedCard).not.toBeNull();
+    expect(editedArticle).not.toBeNull();
 
-    const editedCardView = within(editedCard as HTMLElement);
+    const editedCardView = within(editedArticle as HTMLElement);
 
     expect(editedCardView.getByText("Anthropic")).toBeInTheDocument();
     expect(editedCardView.getByText("Next.js")).toBeInTheDocument();
@@ -139,13 +246,8 @@ describe("Application Tracker", () => {
 
     expect(screen.queryByText("Software Engineering Intern")).not.toBeInTheDocument();
     expect(screen.queryByText("OpenAI")).not.toBeInTheDocument();
-
-    const storedApplications = JSON.parse(
-      window.localStorage.getItem(STORAGE_KEY) || "[]",
-    );
-
-    expect(storedApplications).toHaveLength(1);
-    expect(storedApplications[0]).toMatchObject({
+    expect(applications).toHaveLength(1);
+    expect(applications[0]).toMatchObject({
       company: "Anthropic",
       roleTitle: "Full Stack Intern",
       requiredTechStack: ["Next.js", "Python"],
@@ -168,17 +270,17 @@ describe("Application Tracker", () => {
 
     await user.click(screen.getByRole("button", { name: "Delete" }));
 
-    expect(screen.queryByText("Software Engineering Intern")).not.toBeInTheDocument();
+    await waitFor(() => {
+      expect(
+        screen.queryByText("Software Engineering Intern"),
+      ).not.toBeInTheDocument();
+    });
+
     expect(screen.queryByText("OpenAI")).not.toBeInTheDocument();
     expect(screen.getByText("0 of 0 shown")).toBeInTheDocument();
     expect(
       screen.getByText("No applications match the current filters."),
     ).toBeInTheDocument();
-
-    const storedApplications = JSON.parse(
-      window.localStorage.getItem(STORAGE_KEY) || "[]",
-    );
-
-    expect(storedApplications).toHaveLength(0);
+    expect(applications).toHaveLength(0);
   });
 });

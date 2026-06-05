@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import {
@@ -403,6 +404,12 @@ export default function ResumesPage() {
     <main className="min-h-screen bg-stone-50 text-zinc-950">
       <div className="mx-auto flex max-w-7xl flex-col gap-8 px-5 py-8 sm:px-6 lg:px-8">
         <header className="no-print flex flex-col gap-2">
+          <Link
+            className="text-sm font-medium text-teal-700 transition hover:text-teal-800"
+            href="/"
+          >
+            ← Back to Home
+          </Link>
           <p className="text-sm font-medium uppercase tracking-widest text-teal-700">
             Internship Copilot
           </p>

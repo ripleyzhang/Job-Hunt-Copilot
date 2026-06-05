@@ -69,6 +69,39 @@ For multi-step tasks, state a brief plan:
 
 Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
+## Code Organization and Component Size
+
+Keep files small, focused, and easy to review.
+
+### Component boundaries
+
+Each React component should have one clear responsibility. Avoid putting unrelated features into the same component.
+
+Do not let `app/page.tsx` become the main container for all product logic. Page files should primarily orchestrate feature components, not contain large amounts of form logic, list rendering, API calls, validation, and preview rendering at the same time.
+
+When a file grows too large, split it by feature or responsibility.
+
+Recommended structure:
+
+- Page-level components: routing and high-level layout only
+- Feature components: application tracker, resume builder, resume preview, etc.
+- UI components: buttons, inputs, cards, empty states, badges
+- API functions: isolated in `lib/` or feature-specific API files
+- Types: isolated in `types.ts` or feature-specific type files
+- Validation and data transformation: isolated from JSX when practical
+
+### Size guidelines
+
+Use the following thresholds as refactoring signals:
+
+- A component should usually stay under 300 lines.
+- A component over 300–400 lines should be split unless there is a clear reason not to.
+- A single component should usually not contain more than 8 `useState` calls.
+- More than 8–10 `useState` calls is a signal to extract state into smaller components, a custom hook, or a reducer.
+- A single file should not combine form UI, list UI, preview UI, API requests, validation, and data transformation.
+- Repeated JSX should be extracted into reusable components.
+- If changing a small button, field, or UI section requires scrolling through a large file, the file should be split.
+
 ## Tech Stack
 
 Use the existing stack unless explicitly instructed otherwise.

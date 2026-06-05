@@ -41,7 +41,7 @@ export default function Home() {
 
       <footer className="border-t border-zinc-200 bg-white">
         <div className="mx-auto max-w-7xl px-5 py-4 text-sm text-zinc-500 sm:px-6 lg:px-8">
-          Internship Copilot
+          Ningjing Zhang
         </div>
       </footer>
     </div>

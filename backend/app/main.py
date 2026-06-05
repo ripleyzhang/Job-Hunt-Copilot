@@ -93,6 +93,7 @@ def delete_application(application_id: str, db: Session = Depends(get_db)) -> Re
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
+@app.get("/api/resumes", response_model=list[ResumeRead])
 @app.get("/resumes", response_model=list[ResumeRead])
 def list_resumes(db: Session = Depends(get_db)) -> list[dict]:
     resumes = db.scalars(select(Resume).order_by(Resume.updated_at.desc())).all()
@@ -100,6 +101,7 @@ def list_resumes(db: Session = Depends(get_db)) -> list[dict]:
     return [serialize_resume(resume) for resume in resumes]
 
 
+@app.get("/api/resumes/{resume_id}", response_model=ResumeRead)
 @app.get("/resumes/{resume_id}", response_model=ResumeRead)
 def get_resume(resume_id: str, db: Session = Depends(get_db)) -> dict:
     resume = db.get(Resume, resume_id)
@@ -110,6 +112,7 @@ def get_resume(resume_id: str, db: Session = Depends(get_db)) -> dict:
     return serialize_resume(resume)
 
 
+@app.post("/api/resumes", response_model=ResumeRead, status_code=status.HTTP_201_CREATED)
 @app.post("/resumes", response_model=ResumeRead, status_code=status.HTTP_201_CREATED)
 def create_resume(payload: ResumeCreate, db: Session = Depends(get_db)) -> dict:
     resume = Resume(
@@ -125,6 +128,7 @@ def create_resume(payload: ResumeCreate, db: Session = Depends(get_db)) -> dict:
     return serialize_resume(resume)
 
 
+@app.put("/api/resumes/{resume_id}", response_model=ResumeRead)
 @app.put("/resumes/{resume_id}", response_model=ResumeRead)
 def update_resume(
     resume_id: str, payload: ResumeUpdate, db: Session = Depends(get_db)
@@ -142,6 +146,20 @@ def update_resume(
     db.refresh(resume)
 
     return serialize_resume(resume)
+
+
+@app.delete("/api/resumes/{resume_id}", status_code=status.HTTP_204_NO_CONTENT)
+@app.delete("/resumes/{resume_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_resume(resume_id: str, db: Session = Depends(get_db)) -> Response:
+    resume = db.get(Resume, resume_id)
+
+    if resume is None:
+        raise HTTPException(status_code=404, detail="Resume not found")
+
+    db.delete(resume)
+    db.commit()
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 def resume_content(payload: Union[ResumeCreate, ResumeUpdate]) -> dict:

@@ -1,10 +1,11 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import type { DragEvent, ReactNode } from "react";
 
 import {
   createResume,
+  deleteResume,
   listResumes,
   updateResume,
   type BulletPoint,
@@ -19,6 +20,13 @@ import {
 } from "@/lib/resumes-api";
 
 type ResumeForm = ResumePayload;
+type ResumeMode = "edit" | "preview" | "empty";
+type ValidationResult = {
+  errors: string[];
+  payload?: ResumePayload;
+};
+
+const DATE_PATTERN = /^\d{4}\.(0[1-9]|1[0-2])$/;
 
 const EMPTY_FORM: ResumeForm = {
   title: "Untitled Resume",
@@ -37,8 +45,11 @@ const EMPTY_FORM: ResumeForm = {
 export default function ResumesPage() {
   const [resumes, setResumes] = useState<Resume[]>([]);
   const [selectedResumeId, setSelectedResumeId] = useState<string | null>(null);
+  const [mode, setMode] = useState<ResumeMode>("empty");
   const [form, setForm] = useState<ResumeForm>(EMPTY_FORM);
   const [newSkill, setNewSkill] = useState("");
+  const [draggedProjectId, setDraggedProjectId] = useState<string | null>(null);
+  const draggedProjectIdRef = useRef<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState("");
@@ -56,11 +67,15 @@ export default function ResumesPage() {
           if (loadedResumes[0]) {
             setSelectedResumeId(loadedResumes[0].id);
             setForm(toForm(loadedResumes[0]));
+            setMode("preview");
+          } else {
+            setMode("empty");
           }
         }
       } catch {
         if (isCurrent) {
           setError("Could not load resumes from the backend.");
+          setMode("empty");
         }
       } finally {
         if (isCurrent) {
@@ -84,40 +99,47 @@ export default function ResumesPage() {
   function handleSelectResume(resume: Resume) {
     setSelectedResumeId(resume.id);
     setForm(toForm(resume));
+    setMode("preview");
     setError("");
   }
 
-  async function handleCreateResume() {
-    setIsSaving(true);
+  function handleCreateResume() {
+    setSelectedResumeId(null);
+    setForm({
+      ...EMPTY_FORM,
+      title: nextResumeTitle(resumes.length + 1),
+    });
+    setNewSkill("");
     setError("");
+    setMode("edit");
+  }
 
-    try {
-      const createdResume = await createResume({
-        ...EMPTY_FORM,
-        title: nextResumeTitle(resumes.length + 1),
-      });
-
-      setResumes((currentResumes) => [createdResume, ...currentResumes]);
-      setSelectedResumeId(createdResume.id);
-      setForm(toForm(createdResume));
-    } catch {
-      setError("Could not create resume.");
-    } finally {
-      setIsSaving(false);
+  function handleEdit() {
+    if (selectedResume) {
+      setForm(toForm(selectedResume));
     }
+
+    setError("");
+    setMode("edit");
   }
 
   async function handleSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
+    const validation = validateResume(form);
+
+    if (!validation.payload) {
+      setError(validation.errors.join(" "));
+      return;
+    }
+
     setIsSaving(true);
     setError("");
 
     try {
-      const payload = cleanResume(form);
       const savedResume = selectedResumeId
-        ? await updateResume(selectedResumeId, payload)
-        : await createResume(payload);
+        ? await updateResume(selectedResumeId, validation.payload)
+        : await createResume(validation.payload);
 
       setResumes((currentResumes) => {
         const exists = currentResumes.some((resume) => resume.id === savedResume.id);
@@ -132,8 +154,34 @@ export default function ResumesPage() {
       });
       setSelectedResumeId(savedResume.id);
       setForm(toForm(savedResume));
+      setMode("preview");
     } catch {
       setError("Could not save resume.");
+      setMode("edit");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!selectedResumeId) {
+      return;
+    }
+
+    setIsSaving(true);
+    setError("");
+
+    try {
+      await deleteResume(selectedResumeId);
+      setResumes((currentResumes) =>
+        currentResumes.filter((resume) => resume.id !== selectedResumeId),
+      );
+      setSelectedResumeId(null);
+      setForm(EMPTY_FORM);
+      setNewSkill("");
+      setMode("empty");
+    } catch {
+      setError("Could not delete resume.");
     } finally {
       setIsSaving(false);
     }
@@ -276,6 +324,23 @@ export default function ResumesPage() {
     }));
   }
 
+  function moveProject(targetProjectId: string) {
+    const activeProjectId = draggedProjectIdRef.current || draggedProjectId;
+
+    if (!activeProjectId || activeProjectId === targetProjectId) {
+      return;
+    }
+
+    setForm((currentForm) => ({
+      ...currentForm,
+      projects: moveItem(
+        currentForm.projects,
+        activeProjectId,
+        targetProjectId,
+      ),
+    }));
+  }
+
   function addBullet(section: "workExperiences" | "projects", itemId: string) {
     setForm((currentForm) => ({
       ...currentForm,
@@ -329,7 +394,7 @@ export default function ResumesPage() {
   return (
     <main className="min-h-screen bg-stone-50 text-zinc-950">
       <div className="mx-auto flex max-w-7xl flex-col gap-8 px-5 py-8 sm:px-6 lg:px-8">
-        <header className="flex flex-col gap-2">
+        <header className="no-print flex flex-col gap-2">
           <p className="text-sm font-medium uppercase tracking-widest text-teal-700">
             Internship Copilot
           </p>
@@ -337,12 +402,13 @@ export default function ResumesPage() {
             Resume Builder
           </h1>
           <p className="max-w-2xl text-sm leading-6 text-zinc-600">
-            Manually create and edit structured resume content.
+            Validate, save, preview, edit, delete, and export manual resume
+            content.
           </p>
         </header>
 
         <section className="grid gap-6 lg:grid-cols-[280px_1fr]">
-          <aside className="self-start rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
+          <aside className="no-print self-start rounded-lg border border-zinc-200 bg-white p-4 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <h2 className="text-lg font-semibold">Resumes</h2>
               <button
@@ -384,165 +450,481 @@ export default function ResumesPage() {
             </div>
           </aside>
 
-          <form className="grid gap-5" onSubmit={handleSave}>
+          <section className="grid gap-5">
             {error && (
-              <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">
+              <div className="no-print rounded-lg border border-red-200 bg-red-50 p-4 text-sm font-medium text-red-700">
                 {error}
               </div>
             )}
 
-            <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-              <div className="grid gap-4 md:grid-cols-[1fr_180px]">
-                <Input
-                  label="Resume Title"
-                  onChange={(value) => updateField("title", value)}
-                  value={form.title}
-                />
-                <Select
-                  label="Template"
-                  onChange={(value) => updateField("templateId", value)}
-                  options={["US", "China"]}
-                  value={form.templateId}
-                />
-              </div>
-            </section>
+            {mode === "empty" && (
+              <EmptyState onCreate={handleCreateResume} />
+            )}
 
-            <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-              <SectionHeader title="Contacts" />
-              <div className="mt-4 grid gap-4 md:grid-cols-3">
-                <Input
-                  label="Website"
-                  onChange={(value) => updateContacts("website", value)}
-                  value={form.contacts.website}
+            {mode === "edit" && (
+              <form className="grid gap-5" onSubmit={handleSave}>
+                <ResumeEditor
+                  addBullet={addBullet}
+                  addEducation={addEducation}
+                  addProject={addProject}
+                  addSkill={addSkill}
+                  addWorkExperience={addWorkExperience}
+                  draggedProjectId={draggedProjectId}
+                  form={form}
+                  moveProject={moveProject}
+                  newSkill={newSkill}
+                  removeBullet={removeBullet}
+                  removeEducation={removeEducation}
+                  removeProject={removeProject}
+                  removeSkill={removeSkill}
+                  removeWorkExperience={removeWorkExperience}
+                  setDraggedProjectId={(id) => {
+                    draggedProjectIdRef.current = id;
+                    setDraggedProjectId(id);
+                  }}
+                  setNewSkill={setNewSkill}
+                  updateBullet={updateBullet}
+                  updateContacts={updateContacts}
+                  updateEducation={updateEducation}
+                  updateField={updateField}
+                  updateProject={updateProject}
+                  updateProjectSkills={updateProjectSkills}
+                  updateWorkExperience={updateWorkExperience}
+                  updateWorkExperienceSkills={updateWorkExperienceSkills}
                 />
-                <Input
-                  label="Phone"
-                  onChange={(value) => updateContacts("phone", value)}
-                  value={form.contacts.phone}
-                />
-                <Input
-                  label="Email"
-                  onChange={(value) => updateContacts("email", value)}
-                  type="email"
-                  value={form.contacts.email}
-                />
-              </div>
-            </section>
 
-            <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
-              <SectionHeader title="Skills" />
-              <div className="mt-4 flex flex-col gap-3 sm:flex-row">
-                <input
-                  className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-950 outline-none transition placeholder:text-zinc-400 focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
-                  onChange={(event) => setNewSkill(event.target.value)}
-                  placeholder="Add a skill tag"
-                  value={newSkill}
-                />
-                <button
-                  className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100"
-                  onClick={addSkill}
-                  type="button"
-                >
-                  Add Skill
-                </button>
-              </div>
-              <SkillList skills={form.skills} onRemove={removeSkill} />
-            </section>
-
-            <EditorSection title="Education" onAdd={addEducation}>
-              {form.education.map((item) => (
-                <div className="rounded-lg border border-zinc-200 p-4" key={item.id}>
-                  <EntryHeader onRemove={() => removeEducation(item.id)} />
-                  <div className="mt-4 grid gap-4 md:grid-cols-2">
-                    <Input
-                      label="School Name"
-                      onChange={(value) =>
-                        updateEducation(item.id, "schoolName", value)
-                      }
-                      value={item.schoolName}
-                    />
-                    <Input
-                      label="Degree"
-                      onChange={(value) => updateEducation(item.id, "degree", value)}
-                      value={item.degree}
-                    />
-                    <Input
-                      label="Start Date"
-                      onChange={(value) =>
-                        updateEducation(item.id, "startDate", value)
-                      }
-                      value={item.startDate}
-                    />
-                    <Input
-                      label="End Date"
-                      onChange={(value) => updateEducation(item.id, "endDate", value)}
-                      value={item.endDate}
-                    />
-                    <Input
-                      label="Diploma"
-                      onChange={(value) => updateEducation(item.id, "diploma", value)}
-                      value={item.diploma}
-                    />
-                  </div>
+                <div className="sticky bottom-4 flex justify-end">
+                  <button
+                    className="rounded-md bg-teal-700 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:bg-zinc-400"
+                    disabled={isSaving}
+                    type="submit"
+                  >
+                    {isSaving ? "Saving..." : "Save Resume"}
+                  </button>
                 </div>
-              ))}
-            </EditorSection>
+              </form>
+            )}
 
-            <EditorSection title="Work Experiences" onAdd={addWorkExperience}>
-              {form.workExperiences.map((item) => (
-                <ExperienceEditor
-                  item={item}
-                  key={item.id}
-                  onAddBullet={() => addBullet("workExperiences", item.id)}
-                  onRemove={() => removeWorkExperience(item.id)}
-                  onRemoveBullet={(bulletId) =>
-                    removeBullet("workExperiences", item.id, bulletId)
-                  }
-                  onUpdate={(field, value) =>
-                    updateWorkExperience(item.id, field, value)
-                  }
-                  onUpdateBullet={(bulletId, text) =>
-                    updateBullet("workExperiences", item.id, bulletId, text)
-                  }
-                  onUpdateSkills={(value) =>
-                    updateWorkExperienceSkills(item.id, value)
-                  }
-                />
-              ))}
-            </EditorSection>
-
-            <EditorSection title="Projects" onAdd={addProject}>
-              {form.projects.map((item) => (
-                <ProjectEditor
-                  item={item}
-                  key={item.id}
-                  onAddBullet={() => addBullet("projects", item.id)}
-                  onRemove={() => removeProject(item.id)}
-                  onRemoveBullet={(bulletId) =>
-                    removeBullet("projects", item.id, bulletId)
-                  }
-                  onUpdate={(field, value) => updateProject(item.id, field, value)}
-                  onUpdateBullet={(bulletId, text) =>
-                    updateBullet("projects", item.id, bulletId, text)
-                  }
-                  onUpdateSkills={(value) => updateProjectSkills(item.id, value)}
-                />
-              ))}
-            </EditorSection>
-
-            <div className="sticky bottom-4 flex justify-end">
-              <button
-                className="rounded-md bg-teal-700 px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-teal-800 disabled:cursor-not-allowed disabled:bg-zinc-400"
-                disabled={isSaving}
-                type="submit"
-              >
-                {isSaving ? "Saving..." : selectedResume ? "Save Resume" : "Create Resume"}
-              </button>
-            </div>
-          </form>
+            {mode === "preview" && selectedResume && (
+              <ResumePreviewShell
+                isDeleting={isSaving}
+                onDelete={handleDelete}
+                onEdit={handleEdit}
+                resume={selectedResume}
+              />
+            )}
+          </section>
         </section>
       </div>
     </main>
+  );
+}
+
+function EmptyState({ onCreate }: { onCreate: () => void }) {
+  return (
+    <div className="no-print rounded-lg border border-dashed border-zinc-300 bg-white p-10 text-center shadow-sm">
+      <p className="text-sm text-zinc-600">
+        No resume selected or this resume has been deleted.
+      </p>
+      <button
+        className="mt-4 rounded-md bg-teal-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-teal-800"
+        onClick={onCreate}
+        type="button"
+      >
+        Create New Resume
+      </button>
+    </div>
+  );
+}
+
+function ResumeEditor({
+  addBullet,
+  addEducation,
+  addProject,
+  addSkill,
+  addWorkExperience,
+  draggedProjectId,
+  form,
+  moveProject,
+  newSkill,
+  removeBullet,
+  removeEducation,
+  removeProject,
+  removeSkill,
+  removeWorkExperience,
+  setDraggedProjectId,
+  setNewSkill,
+  updateBullet,
+  updateContacts,
+  updateEducation,
+  updateField,
+  updateProject,
+  updateProjectSkills,
+  updateWorkExperience,
+  updateWorkExperienceSkills,
+}: {
+  addBullet: (section: "workExperiences" | "projects", itemId: string) => void;
+  addEducation: () => void;
+  addProject: () => void;
+  addSkill: () => void;
+  addWorkExperience: () => void;
+  draggedProjectId: string | null;
+  form: ResumeForm;
+  moveProject: (targetProjectId: string) => void;
+  newSkill: string;
+  removeBullet: (
+    section: "workExperiences" | "projects",
+    itemId: string,
+    bulletId: string,
+  ) => void;
+  removeEducation: (id: string) => void;
+  removeProject: (id: string) => void;
+  removeSkill: (id: string) => void;
+  removeWorkExperience: (id: string) => void;
+  setDraggedProjectId: (id: string | null) => void;
+  setNewSkill: (skill: string) => void;
+  updateBullet: (
+    section: "workExperiences" | "projects",
+    itemId: string,
+    bulletId: string,
+    text: string,
+  ) => void;
+  updateContacts: (field: keyof ResumeContacts, value: string) => void;
+  updateEducation: (id: string, field: keyof EducationItem, value: string) => void;
+  updateField: (
+    field: keyof Pick<ResumeForm, "title" | "templateId">,
+    value: string,
+  ) => void;
+  updateProject: (
+    id: string,
+    field: keyof Omit<ProjectItem, "id" | "skills" | "bullets">,
+    value: string,
+  ) => void;
+  updateProjectSkills: (id: string, value: string) => void;
+  updateWorkExperience: (
+    id: string,
+    field: keyof Omit<WorkExperienceItem, "id" | "skills" | "bullets">,
+    value: string,
+  ) => void;
+  updateWorkExperienceSkills: (id: string, value: string) => void;
+}) {
+  return (
+    <>
+      <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+        <div className="grid gap-4 md:grid-cols-[1fr_180px]">
+          <Input
+            label="Resume Title"
+            onChange={(value) => updateField("title", value)}
+            value={form.title}
+          />
+          <Select
+            label="Template"
+            onChange={(value) => updateField("templateId", value)}
+            options={["US", "China"]}
+            value={form.templateId}
+          />
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+        <SectionHeader title="Contacts" />
+        <div className="mt-4 grid gap-4 md:grid-cols-3">
+          <Input
+            label="Personal Website"
+            onChange={(value) => updateContacts("website", value)}
+            value={form.contacts.website}
+          />
+          <Input
+            label="Phone"
+            onChange={(value) => updateContacts("phone", value)}
+            value={form.contacts.phone}
+          />
+          <Input
+            label="Email"
+            onChange={(value) => updateContacts("email", value)}
+            type="email"
+            value={form.contacts.email}
+          />
+        </div>
+      </section>
+
+      <section className="rounded-lg border border-zinc-200 bg-white p-5 shadow-sm">
+        <SectionHeader title="Skills" />
+        <div className="mt-4 flex flex-col gap-3 sm:flex-row">
+          <input
+            className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-950 outline-none transition placeholder:text-zinc-400 focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
+            onChange={(event) => setNewSkill(event.target.value)}
+            placeholder="Add a skill tag"
+            value={newSkill}
+          />
+          <button
+            className="rounded-md border border-zinc-300 px-3 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100"
+            onClick={addSkill}
+            type="button"
+          >
+            Add Skill
+          </button>
+        </div>
+        <SkillList skills={form.skills} onRemove={removeSkill} />
+      </section>
+
+      <EditorSection isEmpty={form.education.length === 0} onAdd={addEducation} title="Education">
+        {form.education.map((item) => (
+          <div className="rounded-lg border border-zinc-200 p-4" key={item.id}>
+            <EntryHeader onRemove={() => removeEducation(item.id)} />
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <Input
+                label="School Name"
+                onChange={(value) => updateEducation(item.id, "schoolName", value)}
+                value={item.schoolName}
+              />
+              <Input
+                label="Degree"
+                onChange={(value) => updateEducation(item.id, "degree", value)}
+                value={item.degree}
+              />
+              <Input
+                label="Start Date"
+                onChange={(value) => updateEducation(item.id, "startDate", value)}
+                placeholder="YYYY.MM"
+                value={item.startDate}
+              />
+              <Input
+                label="End Date"
+                onChange={(value) => updateEducation(item.id, "endDate", value)}
+                placeholder="YYYY.MM"
+                value={item.endDate}
+              />
+              <Input
+                label="Diploma"
+                onChange={(value) => updateEducation(item.id, "diploma", value)}
+                value={item.diploma}
+              />
+            </div>
+          </div>
+        ))}
+      </EditorSection>
+
+      <EditorSection
+        isEmpty={form.workExperiences.length === 0}
+        onAdd={addWorkExperience}
+        title="Work Experiences"
+      >
+        {form.workExperiences.map((item) => (
+          <ExperienceEditor
+            item={item}
+            key={item.id}
+            onAddBullet={() => addBullet("workExperiences", item.id)}
+            onRemove={() => removeWorkExperience(item.id)}
+            onRemoveBullet={(bulletId) =>
+              removeBullet("workExperiences", item.id, bulletId)
+            }
+            onUpdate={(field, value) => updateWorkExperience(item.id, field, value)}
+            onUpdateBullet={(bulletId, text) =>
+              updateBullet("workExperiences", item.id, bulletId, text)
+            }
+            onUpdateSkills={(value) => updateWorkExperienceSkills(item.id, value)}
+          />
+        ))}
+      </EditorSection>
+
+      <EditorSection isEmpty={form.projects.length === 0} onAdd={addProject} title="Projects">
+        {form.projects.map((item) => (
+          <ProjectEditor
+            draggedProjectId={draggedProjectId}
+            item={item}
+            key={item.id}
+            moveProject={moveProject}
+            onAddBullet={() => addBullet("projects", item.id)}
+            onDragStart={() => setDraggedProjectId(item.id)}
+            onDragStop={() => setDraggedProjectId(null)}
+            onRemove={() => removeProject(item.id)}
+            onRemoveBullet={(bulletId) => removeBullet("projects", item.id, bulletId)}
+            onUpdate={(field, value) => updateProject(item.id, field, value)}
+            onUpdateBullet={(bulletId, text) =>
+              updateBullet("projects", item.id, bulletId, text)
+            }
+            onUpdateSkills={(value) => updateProjectSkills(item.id, value)}
+          />
+        ))}
+      </EditorSection>
+    </>
+  );
+}
+
+function ResumePreviewShell({
+  isDeleting,
+  onDelete,
+  onEdit,
+  resume,
+}: {
+  isDeleting: boolean;
+  onDelete: () => void;
+  onEdit: () => void;
+  resume: Resume;
+}) {
+  return (
+    <div className="grid gap-5">
+      <div className="no-print flex flex-wrap justify-end gap-2">
+        <button
+          className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium text-zinc-700 transition hover:bg-zinc-100"
+          onClick={onEdit}
+          type="button"
+        >
+          Edit
+        </button>
+        <button
+          className="rounded-md border border-red-200 px-4 py-2 text-sm font-medium text-red-700 transition hover:bg-red-50 disabled:cursor-not-allowed disabled:bg-zinc-100"
+          disabled={isDeleting}
+          onClick={onDelete}
+          type="button"
+        >
+          Delete
+        </button>
+        <button
+          className="rounded-md bg-teal-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-teal-800"
+          onClick={() => window.print()}
+          type="button"
+        >
+          Export PDF
+        </button>
+      </div>
+
+      <ResumePreview resume={resume} />
+    </div>
+  );
+}
+
+function ResumePreview({ resume }: { resume: Resume }) {
+  const hasWorkExperience = resume.workExperiences.length > 0;
+  const hasProjects = resume.projects.length > 0;
+
+  return (
+    <article
+      className={`resume-preview mx-auto bg-white text-zinc-950 shadow-xl ${
+        resume.templateId === "China" ? "resume-template-china" : "resume-template-us"
+      }`}
+    >
+      <div className="resume-page">
+        <header className="border-b border-zinc-300 pb-4 text-center">
+          <h2 className="text-2xl font-bold tracking-tight">{resume.title}</h2>
+          <p className="mt-2 text-sm text-zinc-600">
+            {resume.contacts.website} | {resume.contacts.phone} |{" "}
+            {resume.contacts.email}
+          </p>
+        </header>
+
+        <PreviewSection title="Skills">
+          <p className="text-sm leading-6">
+            {resume.skills.map((skill) => skill.label).join(", ")}
+          </p>
+        </PreviewSection>
+
+        <PreviewSection title="Education">
+          {resume.education.map((item) => (
+            <PreviewItem key={item.id}>
+              <div className="flex justify-between gap-4">
+                <div>
+                  <h4 className="font-semibold">{item.schoolName}</h4>
+                  <p className="text-sm text-zinc-700">
+                    {item.degree}, {item.diploma}
+                  </p>
+                </div>
+                <p className="shrink-0 text-sm text-zinc-600">
+                  {item.startDate} - {item.endDate}
+                </p>
+              </div>
+            </PreviewItem>
+          ))}
+        </PreviewSection>
+
+        {hasWorkExperience && (
+          <PreviewSection title="Work Experience">
+            {resume.workExperiences.map((item) => (
+              <PreviewItem key={item.id}>
+                <div className="flex justify-between gap-4">
+                  <div>
+                    <h4 className="font-semibold">{item.company}</h4>
+                    <p className="text-sm text-zinc-700">{item.role}</p>
+                    {item.skills.length > 0 && (
+                      <p className="text-xs text-zinc-500">
+                        {item.skills.map((skill) => skill.label).join(", ")}
+                      </p>
+                    )}
+                  </div>
+                  <p className="shrink-0 text-sm text-zinc-600">
+                    {item.startDate} - {item.endDate}
+                  </p>
+                </div>
+                <BulletList bullets={item.bullets} />
+              </PreviewItem>
+            ))}
+          </PreviewSection>
+        )}
+
+        {hasProjects && (
+          <PreviewSection title="Projects">
+            {resume.projects.map((item) => (
+              <PreviewItem key={item.id}>
+                <div className="flex justify-between gap-4">
+                  <div>
+                    <h4 className="font-semibold">{item.projectName}</h4>
+                    {item.skills.length > 0 && (
+                      <p className="text-xs text-zinc-500">
+                        {item.skills.map((skill) => skill.label).join(", ")}
+                      </p>
+                    )}
+                  </div>
+                  <p className="shrink-0 text-sm text-zinc-600">
+                    {item.startDate} - {item.endDate}
+                  </p>
+                </div>
+                <BulletList bullets={item.bullets} />
+              </PreviewItem>
+            ))}
+          </PreviewSection>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function PreviewSection({
+  children,
+  title,
+}: {
+  children: ReactNode;
+  title: string;
+}) {
+  return (
+    <section className="resume-section mt-4">
+      <h3 className="border-b border-zinc-300 pb-1 text-sm font-bold uppercase tracking-wide text-zinc-800">
+        {title}
+      </h3>
+      <div className="mt-2 grid gap-3">{children}</div>
+    </section>
+  );
+}
+
+function PreviewItem({ children }: { children: ReactNode }) {
+  return <div className="resume-item break-inside-avoid">{children}</div>;
+}
+
+function BulletList({ bullets }: { bullets: BulletPoint[] }) {
+  const visibleBullets = bullets.filter((bullet) => bullet.text.trim());
+
+  if (visibleBullets.length === 0) {
+    return null;
+  }
+
+  return (
+    <ul className="mt-2 list-disc space-y-1 pl-5 text-sm leading-6">
+      {visibleBullets.map((bullet) => (
+        <li className="break-inside-avoid" key={bullet.id}>
+          {bullet.text}
+        </li>
+      ))}
+    </ul>
   );
 }
 
@@ -552,10 +934,12 @@ function SectionHeader({ title }: { title: string }) {
 
 function EditorSection({
   children,
+  isEmpty,
   onAdd,
   title,
 }: {
   children: ReactNode;
+  isEmpty: boolean;
   onAdd: () => void;
   title: string;
 }) {
@@ -573,10 +957,12 @@ function EditorSection({
         </button>
       </div>
       <div className="mt-4 grid gap-4">
-        {children || (
+        {isEmpty ? (
           <p className="rounded-md border border-dashed border-zinc-300 p-4 text-sm text-zinc-500">
             No entries yet.
           </p>
+        ) : (
+          children
         )}
       </div>
     </section>
@@ -621,31 +1007,11 @@ function ExperienceEditor({
     <div className="rounded-lg border border-zinc-200 p-4">
       <EntryHeader onRemove={onRemove} />
       <div className="mt-4 grid gap-4 md:grid-cols-2">
-        <Input
-          label="Company"
-          onChange={(value) => onUpdate("company", value)}
-          value={item.company}
-        />
-        <Input
-          label="Role"
-          onChange={(value) => onUpdate("role", value)}
-          value={item.role}
-        />
-        <Input
-          label="Start Date"
-          onChange={(value) => onUpdate("startDate", value)}
-          value={item.startDate}
-        />
-        <Input
-          label="End Date"
-          onChange={(value) => onUpdate("endDate", value)}
-          value={item.endDate}
-        />
-        <Input
-          label="Skills"
-          onChange={onUpdateSkills}
-          value={item.skills.map((skill) => skill.label).join(", ")}
-        />
+        <Input label="Company" onChange={(value) => onUpdate("company", value)} value={item.company} />
+        <Input label="Role" onChange={(value) => onUpdate("role", value)} value={item.role} />
+        <Input label="Start Date" onChange={(value) => onUpdate("startDate", value)} placeholder="YYYY.MM" value={item.startDate} />
+        <Input label="End Date" onChange={(value) => onUpdate("endDate", value)} placeholder="YYYY.MM" value={item.endDate} />
+        <Input label="Skills" onChange={onUpdateSkills} value={item.skills.map((skill) => skill.label).join(", ")} />
       </div>
       <BulletEditor
         bullets={item.bullets}
@@ -658,16 +1024,24 @@ function ExperienceEditor({
 }
 
 function ProjectEditor({
+  draggedProjectId,
   item,
+  moveProject,
   onAddBullet,
+  onDragStart,
+  onDragStop,
   onRemove,
   onRemoveBullet,
   onUpdate,
   onUpdateBullet,
   onUpdateSkills,
 }: {
+  draggedProjectId: string | null;
   item: ProjectItem;
+  moveProject: (targetProjectId: string) => void;
   onAddBullet: () => void;
+  onDragStart: () => void;
+  onDragStop: () => void;
   onRemove: () => void;
   onRemoveBullet: (bulletId: string) => void;
   onUpdate: (
@@ -678,29 +1052,36 @@ function ProjectEditor({
   onUpdateSkills: (value: string) => void;
 }) {
   return (
-    <div className="rounded-lg border border-zinc-200 p-4">
-      <EntryHeader onRemove={onRemove} />
+    <div
+      className={`rounded-lg border p-4 transition ${
+        draggedProjectId === item.id
+          ? "border-teal-700 bg-teal-50"
+          : "border-zinc-200 bg-white"
+      }`}
+      draggable
+      onDragEnd={onDragStop}
+      onDragOver={(event) => {
+        event.preventDefault();
+        moveProject(item.id);
+      }}
+      onDragStart={(event: DragEvent<HTMLDivElement>) => {
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = "move";
+        }
+        onDragStart();
+      }}
+    >
+      <div className="flex items-center justify-between gap-3">
+        <span className="cursor-grab rounded-md bg-zinc-100 px-2 py-1 text-xs font-medium text-zinc-600">
+          Drag
+        </span>
+        <EntryHeader onRemove={onRemove} />
+      </div>
       <div className="mt-4 grid gap-4 md:grid-cols-2">
-        <Input
-          label="Project Name"
-          onChange={(value) => onUpdate("projectName", value)}
-          value={item.projectName}
-        />
-        <Input
-          label="Start Date"
-          onChange={(value) => onUpdate("startDate", value)}
-          value={item.startDate}
-        />
-        <Input
-          label="End Date"
-          onChange={(value) => onUpdate("endDate", value)}
-          value={item.endDate}
-        />
-        <Input
-          label="Skills"
-          onChange={onUpdateSkills}
-          value={item.skills.map((skill) => skill.label).join(", ")}
-        />
+        <Input label="Project Name" onChange={(value) => onUpdate("projectName", value)} value={item.projectName} />
+        <Input label="Start Date" onChange={(value) => onUpdate("startDate", value)} placeholder="YYYY.MM" value={item.startDate} />
+        <Input label="End Date" onChange={(value) => onUpdate("endDate", value)} placeholder="YYYY.MM" value={item.endDate} />
+        <Input label="Skills" onChange={onUpdateSkills} value={item.skills.map((skill) => skill.label).join(", ")} />
       </div>
       <BulletEditor
         bullets={item.bullets}
@@ -792,11 +1173,13 @@ function SkillList({
 function Input({
   label,
   onChange,
+  placeholder,
   type = "text",
   value,
 }: {
   label: string;
   onChange: (value: string) => void;
+  placeholder?: string;
   type?: string;
   value: string;
 }) {
@@ -806,6 +1189,7 @@ function Input({
       <input
         className="rounded-md border border-zinc-300 bg-white px-3 py-2 text-sm text-zinc-950 outline-none transition placeholder:text-zinc-400 focus:border-teal-700 focus:ring-2 focus:ring-teal-100"
         onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
         type={type}
         value={value}
       />
@@ -842,6 +1226,65 @@ function Select({
   );
 }
 
+function validateResume(form: ResumeForm): ValidationResult {
+  const errors: string[] = [];
+  const payload = cleanResume(form);
+
+  if (!payload.contacts.website) {
+    errors.push("Personal website is required.");
+  }
+
+  if (!payload.contacts.phone) {
+    errors.push("Phone is required.");
+  }
+
+  if (!payload.contacts.email) {
+    errors.push("Email is required.");
+  }
+
+  if (payload.skills.length === 0) {
+    errors.push("At least one skill is required.");
+  }
+
+  if (payload.education.length === 0) {
+    errors.push("At least one education entry is required.");
+  }
+
+  payload.education.forEach((item, index) => {
+    const label = `Education ${index + 1}`;
+
+    if (!item.schoolName) errors.push(`${label}: school name is required.`);
+    if (!item.startDate) errors.push(`${label}: start date is required.`);
+    if (!item.endDate) errors.push(`${label}: end date is required.`);
+    if (!item.degree) errors.push(`${label}: degree is required.`);
+    if (!item.diploma) errors.push(`${label}: diploma is required.`);
+    validateDate(`${label}: start date`, item.startDate, errors);
+    validateDate(`${label}: end date`, item.endDate, errors);
+  });
+
+  payload.workExperiences.forEach((item, index) => {
+    const label = `Work Experience ${index + 1}`;
+
+    validateDate(`${label}: start date`, item.startDate, errors);
+    validateDate(`${label}: end date`, item.endDate, errors);
+  });
+
+  payload.projects.forEach((item, index) => {
+    const label = `Project ${index + 1}`;
+
+    validateDate(`${label}: start date`, item.startDate, errors);
+    validateDate(`${label}: end date`, item.endDate, errors);
+  });
+
+  return errors.length > 0 ? { errors } : { errors, payload };
+}
+
+function validateDate(label: string, value: string, errors: string[]) {
+  if (!DATE_PATTERN.test(value)) {
+    errors.push(`${label} must use YYYY.MM format.`);
+  }
+}
+
 function toForm(resume: Resume): ResumeForm {
   return {
     title: resume.title,
@@ -858,10 +1301,47 @@ function cleanResume(form: ResumeForm): ResumePayload {
   return {
     ...form,
     title: form.title.trim() || "Untitled Resume",
-    skills: form.skills.filter((skill) => skill.label.trim()),
-    education: form.education,
-    workExperiences: form.workExperiences,
-    projects: form.projects,
+    contacts: {
+      website: form.contacts.website.trim(),
+      phone: form.contacts.phone.trim(),
+      email: form.contacts.email.trim(),
+    },
+    skills: form.skills
+      .map((skill) => ({ ...skill, label: skill.label.trim() }))
+      .filter((skill) => skill.label),
+    education: form.education.map((item) => ({
+      ...item,
+      schoolName: item.schoolName.trim(),
+      startDate: item.startDate.trim(),
+      endDate: item.endDate.trim(),
+      degree: item.degree.trim(),
+      diploma: item.diploma.trim(),
+    })),
+    workExperiences: form.workExperiences.map((item) => ({
+      ...item,
+      company: item.company.trim(),
+      role: item.role.trim(),
+      startDate: item.startDate.trim(),
+      endDate: item.endDate.trim(),
+      skills: item.skills
+        .map((skill) => ({ ...skill, label: skill.label.trim() }))
+        .filter((skill) => skill.label),
+      bullets: item.bullets
+        .map((bullet) => ({ ...bullet, text: bullet.text.trim() }))
+        .filter((bullet) => bullet.text),
+    })),
+    projects: form.projects.map((item) => ({
+      ...item,
+      projectName: item.projectName.trim(),
+      startDate: item.startDate.trim(),
+      endDate: item.endDate.trim(),
+      skills: item.skills
+        .map((skill) => ({ ...skill, label: skill.label.trim() }))
+        .filter((skill) => skill.label),
+      bullets: item.bullets
+        .map((bullet) => ({ ...bullet, text: bullet.text.trim() }))
+        .filter((bullet) => bullet.text),
+    })),
   };
 }
 
@@ -890,6 +1370,21 @@ function reconcileSkillTags(existingSkills: SkillTag[], value: string): SkillTag
 
       return existingSkill || newSkillTag(label);
     });
+}
+
+function moveItem<T extends { id: string }>(items: T[], fromId: string, toId: string) {
+  const fromIndex = items.findIndex((item) => item.id === fromId);
+  const toIndex = items.findIndex((item) => item.id === toId);
+
+  if (fromIndex < 0 || toIndex < 0) {
+    return items;
+  }
+
+  const nextItems = [...items];
+  const [movedItem] = nextItems.splice(fromIndex, 1);
+  nextItems.splice(toIndex, 0, movedItem);
+
+  return nextItems;
 }
 
 function newEducation(): EducationItem {

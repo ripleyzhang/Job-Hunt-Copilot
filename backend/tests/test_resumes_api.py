@@ -78,7 +78,7 @@ def test_crud_resumes() -> None:
         ],
     }
 
-    create_response = client.post("/resumes", json=payload)
+    create_response = client.post("/api/resumes", json=payload)
 
     assert create_response.status_code == 201
 
@@ -100,7 +100,7 @@ def test_crud_resumes() -> None:
 
     resume_id = created_resume["id"]
 
-    list_response = client.get("/resumes")
+    list_response = client.get("/api/resumes")
 
     assert list_response.status_code == 200
     assert list_response.json() == [created_resume]
@@ -124,7 +124,7 @@ def test_crud_resumes() -> None:
         ],
     }
 
-    update_response = client.put(f"/resumes/{resume_id}", json=update_payload)
+    update_response = client.put(f"/api/resumes/{resume_id}", json=update_payload)
 
     assert update_response.status_code == 200
     assert update_response.json()["title"] == "Backend Resume"
@@ -134,8 +134,13 @@ def test_crud_resumes() -> None:
         "text": "Added resume builder.",
     }
 
+    delete_response = client.delete(f"/api/resumes/{resume_id}")
+
+    assert delete_response.status_code == 204
+    assert client.get(f"/api/resumes/{resume_id}").status_code == 404
+
 
 def test_missing_resume_returns_404() -> None:
-    response = client.get("/resumes/missing-id")
+    response = client.get("/api/resumes/missing-id")
 
     assert response.status_code == 404

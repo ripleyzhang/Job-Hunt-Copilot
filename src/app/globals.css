@@ -24,3 +24,59 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+.resume-preview {
+  width: 210mm;
+  min-height: 297mm;
+}
+
+.resume-page {
+  min-height: 297mm;
+  padding: 14mm;
+}
+
+.resume-template-us {
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.resume-template-china {
+  font-family: var(--font-geist-sans), Arial, Helvetica, sans-serif;
+}
+
+.resume-template-china h2,
+.resume-template-china h3 {
+  color: #0f766e;
+}
+
+.resume-section,
+.resume-item {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
+@page {
+  size: A4;
+  margin: 0;
+}
+
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  body {
+    margin: 0;
+    background: #ffffff;
+  }
+
+  .resume-preview {
+    width: 210mm;
+    min-height: 297mm;
+    box-shadow: none;
+  }
+
+  .resume-page {
+    min-height: 297mm;
+    padding: 14mm;
+  }
+}

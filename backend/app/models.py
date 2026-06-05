@@ -1,9 +1,10 @@
-from datetime import date
+from datetime import date, datetime
 from enum import Enum
 from typing import Optional
 from uuid import uuid4
 
-from sqlalchemy import Date, Enum as SqlEnum, JSON, String, Text
+from sqlalchemy import Date, DateTime, Enum as SqlEnum, JSON, String, Text, func
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .database import Base
@@ -41,3 +42,37 @@ class Application(Base):
         JSON, default=list, nullable=False
     )
     notes: Mapped[str] = mapped_column(Text, default="", nullable=False)
+
+
+class ResumeTemplate(str, Enum):
+    CHINA = "China"
+    US = "US"
+
+
+class Resume(Base):
+    __tablename__ = "resumes"
+
+    id: Mapped[str] = mapped_column(
+        String, primary_key=True, default=lambda: str(uuid4())
+    )
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    template_id: Mapped[ResumeTemplate] = mapped_column(
+        SqlEnum(
+            ResumeTemplate,
+            values_callable=lambda templates: [template.value for template in templates],
+        ),
+        default=ResumeTemplate.US,
+        nullable=False,
+    )
+    content: Mapped[dict] = mapped_column(
+        JSON().with_variant(JSONB, "postgresql"), default=dict, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )

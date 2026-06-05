@@ -102,6 +102,22 @@ Use the following thresholds as refactoring signals:
 - Repeated JSX should be extracted into reusable components.
 - If changing a small button, field, or UI section requires scrolling through a large file, the file should be split.
 
+## Refactor Rules:
+
+- Preserve existing behavior.
+- Do not redesign the UI unless explicitly asked.
+- Do not introduce new features during refactoring.
+- Do not introduce new libraries unless explicitly requested.
+- Extract one responsibility at a time.
+- Keep data flow understandable.
+- Remove only imports, variables, and functions made unused by the refactor.
+- Do not delete pre-existing dead code unless it becomes clearly obsolete because of this refactor.
+- Do not change API endpoint names.
+- Do not change database schema.
+- Do not change request/response payload shapes.
+- Do not change validation rules unless the current implementation contradicts Phase 2 requirements.
+- Do not change visual styling except moving JSX/classes into components.
+
 ## Tech Stack
 
 Use the existing stack unless explicitly instructed otherwise.

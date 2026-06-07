@@ -14,7 +14,7 @@ describe("Home", () => {
       "/resumes",
     );
     expect(screen.getByRole("contentinfo")).toHaveTextContent(
-      "Internship Copilot",
+      "Ningjing Zhang",
     );
   });
 });

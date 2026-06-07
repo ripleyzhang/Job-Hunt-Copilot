@@ -20,7 +20,7 @@ export default function Home() {
             className="text-sm font-medium uppercase tracking-widest text-teal-700"
             href="/"
           >
-            Internship Copilot
+            Job Hunt Copilot
           </Link>
 
           <nav aria-label="Project navigation" className="flex flex-wrap gap-2">

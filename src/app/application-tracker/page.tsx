@@ -203,7 +203,7 @@ export default function Home() {
             ← Back to Home
           </Link>
           <p className="text-sm font-medium uppercase tracking-widest text-teal-700">
-            Internship Copilot
+            Job Hunt Copilot
           </p>
           <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">
             Application Tracker
